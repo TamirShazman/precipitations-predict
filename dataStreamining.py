@@ -24,7 +24,7 @@ url = server_name + ";" + "databaseName=" + database_name + ";"
 # core variable names
 cor_var = ["PRCP", "SNOW", "SNWD", "TMAX", "TMIN"]
 # countries and their FIPS code
-my_countries = [('GB', 'England'), ('GM', 'Germany'), ('FR', 'France'), ('SP', 'Spain'), ('IT', 'Italy')]
+# my_countries = [('GB', 'England'), ('GM', 'Germany'), ('FR', 'France'), ('SP', 'Spain'), ('IT', 'Italy')]
 # main DF scheme
 noaa_schema = StructType([StructField('StationId', StringType(), False),
                           StructField('Date', StringType(), False),
@@ -45,11 +45,10 @@ if __name__ == "__main__":
         .option("user", username) \
         .option("password", password).load() \
         .drop("state")
-    StationDF.show(20)
 
     # download from kafka the data and modify it.
     df = spark \
-        .readStream \
+        .read \
         .format("kafka") \
         .option("kafka.bootstrap.servers", kafka_server) \
         .option("subscribe", "GB, GM, FR, SP, IT") \
@@ -67,17 +66,21 @@ if __name__ == "__main__":
     # loops on each county and takes it's statistic
     for fipsCode, countyName in my_countries:
         # filter the current county
-        finalDf = df.filter(f"StationId LIKE '{fipsCode}%'")
+        finalDf = df.filter("StationId LIKE '" + str(fipsCode) + "%'")
         # create a DF for statistics information
         statDf = finalDf.drop("Year", "Month", "Mean").distinct().join(StationDF, on="StationId", how='inner')
         # agg for each month
-        temp = finalDf.groupby("StationId", "Month").agg(mean("Mean").alias("Mean"))
+        temp = finalDf.groupby("StationId", "Month", "Variable").agg(mean("Mean").alias("Mean"))
         # loops on month
         for month in range(1, 13):
-            monthDf = temp.filter(col("Month") == month)
-            statDf = statDf.join(monthDf, on=((statDf.StationId == monthDf.StationId) &
-                                              (statDf.Variable == monthDf.Variable)), how='leftouter')
-            statDf = statDf.withColumnRenamed("Mean", f"Mean of {str(month)}")
+            monthDf = temp.filter(col("Month") == month).drop("Month")
+            monthDf.show(20)
+            monthDf.createOrReplaceTempView("M")
+            statDf.createOrReplaceTempView("S")
+            statDf = statDf.join(monthDf, on=['StationId', 'Variable'], how='leftouter')
+            statDf.show(20)
+            statDf = statDf.withColumnRenamed("Mean", "Mean of month" + str(month))
+        statDf.show(20)
         try:
             # insert county table
             finalDf.write \
