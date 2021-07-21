@@ -24,7 +24,7 @@ url = server_name + ";" + "databaseName=" + database_name + ";"
 # core variable names
 cor_var = ["PRCP", "SNOW", "SNWD", "TMAX", "TMIN"]
 # countries and their FIPS code
-# my_countries = [('GB', 'England'), ('GM', 'Germany'), ('FR', 'France'), ('SP', 'Spain'), ('IT', 'Italy')]
+my_countries = [('GB', 'England'), ('GM', 'Germany'), ('FR', 'France'), ('SP', 'Spain'), ('IT', 'Italy')]
 # main DF scheme
 noaa_schema = StructType([StructField('StationId', StringType(), False),
                           StructField('Date', StringType(), False),
