@@ -75,8 +75,6 @@ if __name__ == "__main__":
         for month in range(1, 13):
             monthDf = temp.filter(col("Month") == month).drop("Month")
             monthDf.show(20)
-            monthDf.createOrReplaceTempView("M")
-            statDf.createOrReplaceTempView("S")
             statDf = statDf.join(monthDf, on=['StationId', 'Variable'], how='leftouter')
             statDf.show(20)
             statDf = statDf.withColumnRenamed("Mean", "Mean of month " + str(month))
