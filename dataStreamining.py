@@ -79,7 +79,7 @@ if __name__ == "__main__":
             statDf.createOrReplaceTempView("S")
             statDf = statDf.join(monthDf, on=['StationId', 'Variable'], how='leftouter')
             statDf.show(20)
-            statDf = statDf.withColumnRenamed("Mean", "Mean of month" + str(month))
+            statDf = statDf.withColumnRenamed("Mean", "Mean of month " + str(month))
         statDf.show(20)
         try:
             # insert county table
