@@ -57,12 +57,13 @@ if __name__ == "__main__":
         .select(F.from_json(col("value"), schema=noaa_schema).alias('json')) \
         .select("json.*") \
         .filter("CAST(Date AS INT) > 20000101") \
-        .filter(~col("Q_Flag").isNull() | col("Variable").isin(cor_var) == True) \
+        .filter(~col("Q_Flag").isNull() & col("Variable").isin(cor_var) == True) \
         .withColumn("Date", to_date(col("date"), 'yyyyMMdd')) \
         .groupby("StationId", "Date", "Variable").max("Value") \
         .groupby("StationId", year("Date").alias("Year"), month("Date").alias("Month"), "Variable"). \
         agg(mean("max(Value)").alias("Mean"))
-    df.show(20)
+    df.filter(col("Variable") == 'TAVG').show(20)
+    df.show()
     # loops on each county and takes it's statistic
     for fipsCode, countyName in my_countries:
         # filter the current county
@@ -74,9 +75,7 @@ if __name__ == "__main__":
         # loops on month
         for month in range(1, 13):
             monthDf = temp.filter(col("Month") == month).drop("Month")
-            monthDf.show(20)
             statDf = statDf.join(monthDf, on=['StationId', 'Variable'], how='leftouter')
-            statDf.show(20)
             statDf = statDf.withColumnRenamed("Mean", "Mean of month " + str(month))
         statDf.show(20)
         try:
