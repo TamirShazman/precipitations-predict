@@ -41,6 +41,7 @@ def writeToSQLWarehouse(myDf, epochId):
         .format("com.microsoft.sqlserver.jdbc.spark") \
         .mode('overwrite') \
         .option("url", url) \
+        .option("forward_spark_azure_storage_credentials", "true") \
         .option("dbtable", myDf) \
         .option("user", username) \
         .option("password", password) \
