@@ -37,12 +37,63 @@ noaa_schema = StructType([StructField('StationId', StringType(), False),
 
 
 def writeToSQLWarehouse(myDf, epochId):
-    myDf.write \
+    temp = myDf.groupby("StationId", "Month", "Variable").agg(mean("Mean").alias("Mean"))
+    statDf = temp.drop("Month", "Mean").distinct().join(StationDF, on="StationId", how='inner')
+    for m in range(1, 13):
+        monthDf = temp.filter(col("Month") == m).drop("Month")
+        statDf = statDf.join(monthDf, on=['StationId', 'Variable'], how='leftouter')
+        statDf = statDf.withColumnRenamed("Mean", "Mean of month " + str(m))
+    statDf.write \
         .format("com.microsoft.sqlserver.jdbc.spark") \
         .mode('overwrite') \
         .option("url", url) \
         .option("forward_spark_azure_storage_credentials", "true") \
         .option("dbtable", myDf) \
+        .option("user", username) \
+        .option("password", password) \
+        .save()
+    myDf.filter("StationId LIKE '" + "GB%'").write \
+        .format("com.microsoft.sqlserver.jdbc.spark") \
+        .mode('overwrite') \
+        .option("url", url) \
+        .option("forward_spark_azure_storage_credentials", "true") \
+        .option("dbtable", "GB_Table") \
+        .option("user", username) \
+        .option("password", password) \
+        .save()
+    myDf.filter("StationId LIKE '" + "GM%'").write \
+        .format("com.microsoft.sqlserver.jdbc.spark") \
+        .mode('overwrite') \
+        .option("url", url) \
+        .option("forward_spark_azure_storage_credentials", "true") \
+        .option("dbtable", "GM_Table") \
+        .option("user", username) \
+        .option("password", password) \
+        .save()
+    myDf.filter("StationId LIKE '" + "FR%'").write \
+        .format("com.microsoft.sqlserver.jdbc.spark") \
+        .mode('overwrite') \
+        .option("url", url) \
+        .option("forward_spark_azure_storage_credentials", "true") \
+        .option("dbtable", "FR_Table") \
+        .option("user", username) \
+        .option("password", password) \
+        .save()
+    myDf.filter("StationId LIKE '" + "SP%'").write \
+        .format("com.microsoft.sqlserver.jdbc.spark") \
+        .mode('overwrite') \
+        .option("url", url) \
+        .option("forward_spark_azure_storage_credentials", "true") \
+        .option("dbtable", "SP_Table") \
+        .option("user", username) \
+        .option("password", password) \
+        .save()
+    myDf.filter("StationId LIKE '" + "IT%'").write \
+        .format("com.microsoft.sqlserver.jdbc.spark") \
+        .mode('overwrite') \
+        .option("url", url) \
+        .option("forward_spark_azure_storage_credentials", "true") \
+        .option("dbtable", "IT_Table") \
         .option("user", username) \
         .option("password", password) \
         .save()
@@ -60,11 +111,12 @@ if __name__ == "__main__":
         .drop("state")
 
     # download from kafka the data and modify it.
-    query = (
+    firsDF = (
         spark.readStream
         .format("kafka")
         .option("kafka.bootstrap.servers", kafka_server)
         .option("subscribe", "GB, GM, FR, SP, IT")
+        .option("startingOffsets", "earliest")
         .load()
         .selectExpr("CAST(value AS STRING)")
         .select(F.from_json(col("value"), schema=noaa_schema).alias('json'))
@@ -74,26 +126,12 @@ if __name__ == "__main__":
         .filter(col("Variable").isin(cor_var) == True)
         .withColumn("Date", to_date(col("date"), 'yyyyMMdd'))
         .groupby("StationId", "Date", "Variable").max("Value")
-        .groupby("StationId", year("Date").alias("Year"), month("Date").alias("Month"), "Variable")
+        .toDF("StationId", "Date", "Variable", "max(Value)")
+        .groupby("StationId", year("Date").alias("Year"), month("Date").alias("Month"), "Variable")\
         .agg(mean("max(Value)").alias("Mean"))
     )
-    print("Done First")
-    temp = query.groupby("StationId", "Month", "Variable").agg(mean("Mean").alias("Mean"))
-    statDf = temp.drop("Month", "Mean").distinct().join(StationDF, on="StationId", how='inner')
-    for month in range(1, 13):
-        monthDf = temp.filter(col("Month") == month).drop("Month")
-        statDf = statDf.join(monthDf, on=['StationId', 'Variable'], how='leftouter')
-        statDf = statDf.withColumnRenamed("Mean", "Mean of month " + str(month))
-        print("Done " + str(month))
-    statDf.writeStream.foreachBatch(writeToSQLWarehouse).outputMode("update").start()
-    GB_Table = query.filter("StationId LIKE '" + "GB%'").writeStream.foreachBatch(writeToSQLWarehouse).\
-        outputMode("update").start()
-    GM_Table = query.filter("StationId LIKE '" + "GM%'").writeStream.foreachBatch(writeToSQLWarehouse).\
-        outputMode("update").start()
-    FR_Table = query.filter("StationId LIKE '" + "FR%'").writeStream.foreachBatch(writeToSQLWarehouse).\
-        outputMode("update").start()
-    SP_Table = query.filter("StationId LIKE '" + "SP%'").writeStream.foreachBatch(writeToSQLWarehouse).\
-        outputMode("update").start()
-    IT_Table = query.filter("StationId LIKE '" + "IT%'").writeStream.foreachBatch(writeToSQLWarehouse).\
-        outputMode("update").start()
+    print(firsDF)
+    query = firsDF.writeStream.foreachBatch(writeToSQLWarehouse).outputMode("update").start()
+    query.awaitTermination()
+
 
