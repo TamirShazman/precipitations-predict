@@ -1,7 +1,7 @@
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import *
-from pyspark.sql.functions import to_date, col, month, year, mean
+from pyspark.sql.functions import to_date, col, month, year, mean, variance
 
 """
 In this script, the data we'll be downloaded and modify for insertion to DB. The countries that we selected to download
@@ -24,7 +24,7 @@ url = server_name + ";" + "databaseName=" + database_name + ";"
 # core variable names
 cor_var = ["PRCP", "SNOW", "SNWD", "TMAX", "TMIN"]
 # countries and their FIPS code
-my_countries = [('GB', 'England'), ('GM', 'Germany'), ('FR', 'France'), ('SP', 'Spain'), ('IT', 'Italy')]
+
 # main DF scheme
 noaa_schema = StructType([StructField('StationId', StringType(), False),
                           StructField('Date', StringType(), False),
@@ -34,6 +34,18 @@ noaa_schema = StructType([StructField('StationId', StringType(), False),
                           StructField('Q_Flag', StringType(), True),
                           StructField('S_Flag', StringType(), True),
                           StructField('ObsTime', StringType(), True)])
+
+
+def writeToSQLWarehouse(myDf, epochId):
+    myDf.write \
+        .format("com.microsoft.sqlserver.jdbc.spark") \
+        .mode('overwrite') \
+        .option("url", url) \
+        .option("dbtable", myDf) \
+        .option("user", username) \
+        .option("password", password) \
+        .save()
+
 
 if __name__ == "__main__":
     spark = SparkSession.builder.getOrCreate()
@@ -47,55 +59,40 @@ if __name__ == "__main__":
         .drop("state")
 
     # download from kafka the data and modify it.
-    df = spark \
-        .read \
-        .format("kafka") \
-        .option("kafka.bootstrap.servers", kafka_server) \
-        .option("subscribe", "GB, GM, FR, SP, IT") \
-        .load() \
-        .selectExpr("CAST(value AS STRING)") \
-        .select(F.from_json(col("value"), schema=noaa_schema).alias('json')) \
-        .select("json.*") \
-        .filter("CAST(Date AS INT) > 20000101") \
-        .filter(~col("Q_Flag").isNull() & col("Variable").isin(cor_var) == True) \
-        .withColumn("Date", to_date(col("date"), 'yyyyMMdd')) \
-        .groupby("StationId", "Date", "Variable").max("Value") \
-        .groupby("StationId", year("Date").alias("Year"), month("Date").alias("Month"), "Variable"). \
-        agg(mean("max(Value)").alias("Mean"))
-    df.filter(col("Variable") == 'TAVG').show(20)
-    df.show()
-    # loops on each county and takes it's statistic
-    for fipsCode, countyName in my_countries:
-        # filter the current county
-        finalDf = df.filter("StationId LIKE '" + str(fipsCode) + "%'")
-        # create a DF for statistics information
-        statDf = finalDf.drop("Year", "Month", "Mean").distinct().join(StationDF, on="StationId", how='inner')
-        # agg for each month
-        temp = finalDf.groupby("StationId", "Month", "Variable").agg(mean("Mean").alias("Mean"))
-        # loops on month
-        for month in range(1, 13):
-            monthDf = temp.filter(col("Month") == month).drop("Month")
-            statDf = statDf.join(monthDf, on=['StationId', 'Variable'], how='leftouter')
-            statDf = statDf.withColumnRenamed("Mean", "Mean of month " + str(month))
-        statDf.show(20)
-        try:
-            # insert county table
-            finalDf.write \
-                .format("com.microsoft.sqlserver.jdbc.spark") \
-                .mode("overwrite") \
-                .option("url", url) \
-                .option("dbtable", countyName + "_table") \
-                .option("user", username) \
-                .option("password", password) \
-                .save()
-            # append to statistic table
-            finalDf.write \
-                .format("com.microsoft.sqlserver.jdbc.spark") \
-                .mode("append") \
-                .option("url", url) \
-                .option("dbtable", "StationStat") \
-                .option("user", username) \
-                .option("password", password) \
-                .save()
-        except ValueError as error:
-            print("Connector write failed", error)
+    query = (
+        spark.readStream
+        .format("kafka")
+        .option("kafka.bootstrap.servers", kafka_server)
+        .option("subscribe", "GB, GM, FR, SP, IT")
+        .load()
+        .selectExpr("CAST(value AS STRING)")
+        .select(F.from_json(col("value"), schema=noaa_schema).alias('json'))
+        .select("json.*")
+        .filter("CAST(Date AS INT) > 20000101")
+        .filter(col("Q_Flag").isNull())
+        .filter(col("Variable").isin(cor_var) == True)
+        .withColumn("Date", to_date(col("date"), 'yyyyMMdd'))
+        .groupby("StationId", "Date", "Variable").max("Value")
+        .groupby("StationId", year("Date").alias("Year"), month("Date").alias("Month"), "Variable")
+        .agg(mean("max(Value)").alias("Mean"))
+    )
+    print("Done First")
+    temp = query.groupby("StationId", "Month", "Variable").agg(mean("Mean").alias("Mean"))
+    statDf = temp.drop("Month", "Mean").distinct().join(StationDF, on="StationId", how='inner')
+    for month in range(1, 13):
+        monthDf = temp.filter(col("Month") == month).drop("Month")
+        statDf = statDf.join(monthDf, on=['StationId', 'Variable'], how='leftouter')
+        statDf = statDf.withColumnRenamed("Mean", "Mean of month " + str(month))
+        print("Done " + str(month))
+    statDf.writeStream.foreachBatch(writeToSQLWarehouse).outputMode("update").start()
+    GB_Table = query.filter("StationId LIKE '" + "GB%'").writeStream.foreachBatch(writeToSQLWarehouse).\
+        outputMode("update").start()
+    GM_Table = query.filter("StationId LIKE '" + "GM%'").writeStream.foreachBatch(writeToSQLWarehouse).\
+        outputMode("update").start()
+    FR_Table = query.filter("StationId LIKE '" + "FR%'").writeStream.foreachBatch(writeToSQLWarehouse).\
+        outputMode("update").start()
+    SP_Table = query.filter("StationId LIKE '" + "SP%'").writeStream.foreachBatch(writeToSQLWarehouse).\
+        outputMode("update").start()
+    IT_Table = query.filter("StationId LIKE '" + "IT%'").writeStream.foreachBatch(writeToSQLWarehouse).\
+        outputMode("update").start()
+
