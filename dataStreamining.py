@@ -24,106 +24,70 @@ url = server_name + ";" + "databaseName=" + database_name + ";"
 # core variable names
 cor_var = ["PRCP", "SNOW", "SNWD", "TMAX", "TMIN"]
 # countries and their FIPS code
-
+country_list = ['GB', 'GM', 'FR', 'SP', 'IT']
 # main DF scheme
-noaa_schema = StructType([StructField('StationId', StringType(), False),
+basic_schema = StructType([StructField('StationId', StringType(), False),
+                           StructField('Date', StringType(), False),
+                           StructField('Variable', StringType(), False),
+                           StructField('Value', IntegerType(), False),
+                           StructField('M_Flag', StringType(), True),
+                           StructField('Q_Flag', StringType(), True),
+                           StructField('S_Flag', StringType(), True),
+                           StructField('ObsTime', StringType(), True)])
+
+myDB_schema = StructType([StructField('StationId', StringType(), False),
                           StructField('Date', StringType(), False),
                           StructField('Variable', StringType(), False),
-                          StructField('Value', IntegerType(), False),
-                          StructField('M_Flag', StringType(), True),
-                          StructField('Q_Flag', StringType(), True),
-                          StructField('S_Flag', StringType(), True),
-                          StructField('ObsTime', StringType(), True)])
+                          StructField('Value', IntegerType(), False)])
 
 
-def writeToSQLWarehouse(myDf, epochId):
-    print("Do i ever get to here ")
-    myDf = myDf.selectExpr("CAST(value AS STRING)") \
-        .select(F.from_json(col("value"), schema=noaa_schema).alias('json')) \
-        .select("json.*") \
-        .filter("CAST(Date AS INT) > 20000101") \
-        .filter(col("Q_Flag").isNull()) \
-        .filter(col("Variable").isin(cor_var) == True) \
-        .withColumn("Date", to_date(col("date"), 'yyyyMMdd')) \
-        .groupby("StationId", "Date", "Variable").max("Value") \
-        .groupby("StationId", year("Date").alias("Year"), month("Date").alias("Month"), "Variable") \
-        .agg(mean("max(Value)").alias("Mean")).toDF("StationId", "Year", "Month", "Variable", "Mean")
-    myDf.show(20)
-    temp = myDf.groupby("StationId", "Month", "Variable").agg(mean("Mean").alias("Mean"))
-    statDf = temp.drop("Month", "Mean").distinct().join(StationDF, on="StationId", how='inner')
-    for m in range(1, 13):
-        monthDf = temp.filter(col("Month") == m).drop("Month")
-        statDf = statDf.join(monthDf, on=['StationId', 'Variable'], how='leftouter')
-        statDf = statDf.withColumnRenamed("Mean", "MeanOfMonth" + str(m))
-    statDf.write \
-        .format("com.microsoft.sqlserver.jdbc.spark") \
-        .mode('append') \
-        .option("url", "StatTable") \
-        .option("dbtable", myDf) \
-        .option("user", username) \
-        .option("password", password) \
-        .save()
-    myDf.filter("StationId LIKE '" + "GB%'").write \
-        .format("com.microsoft.sqlserver.jdbc.spark") \
-        .mode('append') \
-        .option("url", url) \
-        .option("dbtable", "GB_Table") \
-        .option("user", username) \
-        .option("password", password) \
-        .save()
-    myDf.filter("StationId LIKE '" + "GM%'").write \
-        .format("com.microsoft.sqlserver.jdbc.spark") \
-        .mode('append') \
-        .option("url", url) \
-        .option("dbtable", "GM_Table") \
-        .option("user", username) \
-        .option("password", password) \
-        .save()
-    myDf.filter("StationId LIKE '" + "FR%'").write \
-        .format("com.microsoft.sqlserver.jdbc.spark") \
-        .mode('append') \
-        .option("url", url) \
-        .option("dbtable", "FR_Table") \
-        .option("user", username) \
-        .option("password", password) \
-        .save()
-    myDf.filter("StationId LIKE '" + "SP%'").write \
-        .format("com.microsoft.sqlserver.jdbc.spark") \
-        .mode('append') \
-        .option("url", url) \
-        .option("dbtable", "SP_Table") \
-        .option("user", username) \
-        .option("password", password) \
-        .save()
-    myDf.filter("StationId LIKE '" + "IT%'").write \
-        .format("com.microsoft.sqlserver.jdbc.spark") \
-        .mode('append') \
-        .option("url", url) \
-        .option("dbtable", "IT_Table") \
-        .option("user", username) \
-        .option("password", password) \
-        .save()
+def writeToSQLWarehouse(myDf, epochId, country_list):
+    print("We made it")
+    for country in country_list:
+        myDf.filter("StationId LIKE '" + country + "%'") \
+            .write \
+            .format("com.microsoft.sqlserver.jdbc.spark") \
+            .mode('append') \
+            .option("url", url) \
+            .option("dbtable", country + "_Table") \
+            .option("user", username) \
+            .option("password", password) \
+            .save()
 
 
 if __name__ == "__main__":
     spark = SparkSession.builder.getOrCreate()
-    # fetch the station information
-    StationDF = spark.read \
-        .format("com.microsoft.sqlserver.jdbc.spark") \
-        .option("url", url) \
-        .option("dbtable", "Stations") \
-        .option("user", username) \
-        .option("password", password).load() \
-        .drop("state")
+    rdd = spark.sparkContext.emptyRDD()
+    Df = spark.createDataFrame(rdd, myDB_schema)
+    # initialize database
+    for country in country_list:
+        Df.write \
+            .format("com.microsoft.sqlserver.jdbc.spark") \
+            .mode("overwrite") \
+            .option("url", url) \
+            .option("dbtable", country + "_Table") \
+            .option("user", username) \
+            .option("password", password) \
+            .save()
 
-    # download from kafka the data and modify it.
-    firsDF = (
+    firstDF = (
         spark.readStream
-            .format("kafka")
-            .option("kafka.bootstrap.servers", kafka_server)
-            .option("subscribe", "GB, GM, FR, SP, IT")
-            .option("startingOffsets", "earliest")
-            .load()
+        .format("kafka")
+        .option("kafka.bootstrap.servers", kafka_server)
+        .option("subscribe", "GB, GM, FR, SP, IT")
+        .option("startingOffsets", "earliest")
+        .load()
+        .selectExpr("CAST(value AS STRING)")
+        .select(F.from_json(col("value"), schema=basic_schema).alias('json'))
+        .select("json.*")
+        .drop("M_Flag", "S_Flag", "ObsTime")
+        .filter("CAST(Date AS INT) > 20000101")
+        .filter(col("Q_Flag").isNull())
+        .filter(col("Variable").isin(cor_var) == True)
+        .withColumn("Date", to_date(col("date"), 'yyyyMMdd'))
+        .groupby("StationId", "Date", "Variable").max("Value").alias("Value")
     )
-    print(firsDF)
-    query = firsDF.writeStream.trigger(processingTime='1 minutes').foreachBatch(writeToSQLWarehouse).outputMode("update").start().awaitTermination()
+    print(firstDF)
+    query = firstDF.writeStream.foreachBatch(lambda df, epoch_id: writeToSQLWarehouse(df, epoch_id, country_list)). \
+        trigger(processingTime='60 seconds').outputMode("update").start()
+    query.awaitTermination()
