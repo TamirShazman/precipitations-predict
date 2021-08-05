@@ -23,15 +23,13 @@ country_list = ['GB', 'GM', 'FR', 'SP', 'IT']
 if __name__ == "__main__":
     spark = SparkSession.builder.getOrCreate()
     # downloading coordination file that holds the coordination of each station
-    path = 'http://noaa-ghcn-pds.s3.amazonaws.com/ghcnd-stations.txt'
-    spark.sparkContext.addFile(path)
-    url_df = spark.read.text(SparkFiles.get('ghcnd-stations.txt'))
-    url_df = url_df.select(
-        url_df.value.substr(0, 11).alias('StationId'),
-        url_df.value.substr(12, 9).cast("float").alias('latitude'),
-        url_df.value.substr(22, 9).cast("float").alias('longitude'),
-        url_df.value.substr(39, 2).alias('state')
-    )
+    url_df = spark.read \
+        .format("com.microsoft.sqlserver.jdbc.spark") \
+        .option("url", url) \
+        .option("dbtable", "Stations") \
+        .option("user", username) \
+        .option("password", password) \
+        .load()
     # filter it to relevant station
     url_df = url_df.filter("where StationId Like 'GB%' or StationId Like 'GM%' or StationId Like 'FR% or "
                            "StationId Like 'SP% or StationId Like 'IT%")
