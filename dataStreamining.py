@@ -5,13 +5,11 @@ from pyspark.sql.functions import to_date, col, month, year, mean, variance
 
 """
 In this script, the data we'll be downloaded and modify for insertion to DB. The countries that we selected to download
-their data are England, Germany, France, Spain and Italy.First of all the script fetch Station table from the DB 
-(table that already been inserted to DB with information about station location).After transform the data from json file 
-structure to Spark DF and cleans the the data from outliers (Q_FLAG).Then it's filter all the old data 
+their data are England, Germany, France, Spain and Italy. After transform the data from json file 
+structure to Spark DF and cleans the the data from outliers (Q_FLAG).Then we filter all the old data 
 (older then 1.1.2000) and the keeps only samples from the core variables. After that it's aggregates the sample from
-each day to one day (by using the max value of samples from the day), and then aggregate the mean (of each year) of each
-month. Finally it's insert each county to it Table and calculates statistics of each station (the mean of each variable
-for each month for the whole period that inserted to DB.
+each day to one day (by using the max value of samples from the day). Finally it's insert each county to it Table and 
+calculates. 
 """
 
 # information for connection
@@ -22,7 +20,7 @@ server_name = "jdbc:sqlserver://technionddscourse.database.windows.net:1433"
 database_name = "tmyr"
 url = server_name + ";" + "databaseName=" + database_name + ";"
 # core variable names
-cor_var = ["PRCP", "SNOW", "SNWD", "TMAX", "TMIN"]
+cor_var = ["PRCP", "SNOW", "SNWD", "TMAX", "TMIN", "TAVG"]
 # countries and their FIPS code
 country_list = ['GB', 'GM', 'FR', 'SP', 'IT']
 # main DF scheme
@@ -35,15 +33,16 @@ basic_schema = StructType([StructField('StationId', StringType(), False),
                            StructField('S_Flag', StringType(), True),
                            StructField('ObsTime', StringType(), True)])
 
-myDB_schema = StructType([StructField('StationId', StringType(), False),
-                          StructField('Date', StringType(), False),
-                          StructField('Variable', StringType(), False),
-                          StructField('Value', IntegerType(), False)])
+myDB_schema = StructType([StructField('StationId', StringType(), True),
+                          StructField('Date', DateType(), True),
+                          StructField('Variable', StringType(), True),
+                          StructField('Value', IntegerType(), True)])
 
 
 def writeToSQLWarehouse(myDf, epochId, country_list):
-    print("We made it")
+    myDf.printSchema()
     for country in country_list:
+        print(country)
         myDf.filter("StationId LIKE '" + country + "%'") \
             .write \
             .format("com.microsoft.sqlserver.jdbc.spark") \
@@ -85,9 +84,8 @@ if __name__ == "__main__":
         .filter(col("Q_Flag").isNull())
         .filter(col("Variable").isin(cor_var) == True)
         .withColumn("Date", to_date(col("date"), 'yyyyMMdd'))
-        .groupby("StationId", "Date", "Variable").max("Value").alias("Value")
+        .groupby("StationId", "Date", "Variable").agg(F.max("Value").alias("Value"))
     )
-    print(firstDF)
     query = firstDF.writeStream.foreachBatch(lambda df, epoch_id: writeToSQLWarehouse(df, epoch_id, country_list)). \
         trigger(processingTime='60 seconds').outputMode("update").start()
     query.awaitTermination()
