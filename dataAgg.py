@@ -31,8 +31,8 @@ if __name__ == "__main__":
         .option("password", password) \
         .load()
     # filter it to relevant station
-    url_df = url_df.filter("where StationId Like 'GB%' or StationId Like 'GM%' or StationId Like 'FR% or "
-                           "StationId Like 'SP% or StationId Like 'IT%")
+    url_df = url_df.filter("StationId LIKE 'GB%' or StationId LIKE 'GM%' or StationId LIKE 'FR% or "
+                           "StationId LIKE 'SP% or StationId LIKE 'IT%")
 
     try:
         url_df.write \
