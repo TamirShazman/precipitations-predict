@@ -1,10 +1,9 @@
 from pyspark.sql.window import Window
-from pyspark.sql.functions import lit, lag, avg, asc, col, last, first
+from pyspark.sql.functions import lit, lag, avg, asc, col, last, row_number, stddev
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.regression import DecisionTreeRegressor, RandomForestRegressor, GBTRegressor
 from pyspark.ml.evaluation import RegressionEvaluator
 from pyspark.ml.regression import LinearRegression
-from statsmodels.tsa.stattools import adfuller
 from pyspark.sql import SparkSession
 
 username = "tmyr"
@@ -12,6 +11,22 @@ password = "Qwerty12!"
 server_name = "jdbc:sqlserver://technionddscourse.database.windows.net:1433"
 database_name = "tmyr"
 url = server_name + ";" + "databaseName=" + database_name + ";"
+
+cluster1 = ['FRE00106196', 'FRM00007168', 'FRE00171632', 'FRE00171619', 'FRM00007460', 'FRM00007149', 'FRM00007481',
+            'FRE00104112', 'FRE00104040', 'FRE00104949', 'FR000007130', 'FRE00104092', 'FRE00104048', 'FR000007150',
+            'FR000007255', 'FRE00104072', 'FRE00104886', 'FRE00104044', 'FRM00007005', 'FRM00007471', 'FRE00104088',
+            'FRE00104975', 'FRM00007299', 'FRM00007280', 'FRE00104901', 'FR000007510', 'FRE00106184', 'FRE00104887',
+            'FRE00104052', 'FRE00106192', 'FRM00007591', 'FRM00007335', 'FRM00007015', 'FRM00007181', 'FRM00007072',
+            'FRM00007558', 'FR069029001', 'FR000007190', 'FRM00061998', 'FRM00007535', 'FRE00104934', 'FRE00104982',
+            'FRE00104036', 'FR000007630', 'FRM00007037', 'FRM00007240', 'FRM00007314', 'FRM00007139', 'FRM00007027',
+            'FRM00007180', 'FRE00106190', 'FRE00106200']
+cluster2 = ['FRM00007643', 'FR013055001', 'FRE00104937', 'FRE00104124', 'FR000007747', 'FRE00106209', 'FRE00104120',
+            'FRM00007207', 'FRM00007690', 'FRM00007100', 'FRE00171623', 'FRM00007761', 'FRE00171640', 'FRE00104943',
+            'FRE00106207', 'FRM00007222', 'FR000007650', 'FRM00007117', 'FRE00171627', 'FRM00007661', 'FRM00007790']
+cluster3 = ['FRE00104963', 'FR000007560']
+cluster4 = ['FRM00007607', 'FRE00104980', 'FRE00104936', 'FRE00106205', 'FRM00007627', 'FRE00104957', 'FRE00104974',
+            'FRM00007110', 'FRE00106203', 'FRE00104907', 'FRE00104484', 'FRE00104930', 'FRE00104116', 'FRM00007434',
+            'FRE00104979', 'FRE00104883', 'FRE00106195', 'FRE00104902', 'FRE00104935', 'FRM00007621']
 
 
 class LagGather:
@@ -57,83 +72,25 @@ class LagGather:
         return self.FeatureNames
 
 
-class MovingAverageSmoothing:
-    # this class is used for performing Moving-average smoothing
-    def __init__(self):
-        # this class has 2 data members
-        self.nLags = 0
-        self.FeatureNames = []
-
-    def setLagLength(self, nLags):
-        # this sets the window size over which moving average is performed
-        self.nLags = nLags
-        return self
-
-    def setInputCol(self, colname):
-        # this sets the time-series column on which
-        # moving-average is performed
-        self.columnName = colname
-        return self
-
-    def transform(self, df):
-        # this transforms the spark dataframe (i.e time-series column)
-        # and creates column contain the moving-average over created
-        # time-window
-        mywindow = Window.rowsBetween(-self.nLags, 0)
-        strMovAvg = self.columnName + '_' + str(self.nLags) + '_MovingAvg'
-        df = df.withColumn(strMovAvg, avg(df[self.columnName]).over(mywindow))
-        self.FeatureNames.append(strMovAvg)
-        return df
-
-    def getFeatureNames(self):
-        # this returns the name of feature-column
-        # created by transform method
-        return self.FeatureNames
-
-
-def difference(df, inputCol, outputCol, diff):
-    # performs first-order differencing
-    lag1Window = Window.rowsBetween(-diff, 0)
-    df = df.withColumn(outputCol, df[inputCol] - first(df[inputCol]).over(lag1Window))
-    return df
-
-
-def forecast(df, forecast_days, p, q, timeSeriesColumn, regressor):
-    # this performs model training
-    # this calls the machine-learning algorithms of Spark ML library
-    # creating labels for machine-learning
+def forecast(df_train, df_test, forecast_days, regressor):
+    """
+    :param df_train:train DF
+    :param df_test: test DF
+    :param forecast_days: day number to forecast (in the future)
+    :param regressor: type of regressor
+    :return:new DF with label column and predication
+    """
     LeadWindow = Window.rowsBetween(0, forecast_days)
-    df = df.withColumn("label", last(df[timeSeriesColumn]).over(LeadWindow))
+    df_train = df_train.withColumn("label", last(df_train["PRCP-tran"]).over(LeadWindow))
+    df_test = df_test.withColumn("label", last(df_test["PRCP-tran"]).over(LeadWindow))
 
-    features = [timeSeriesColumn]
-
-    # Auto-regression feature
-    LagTransformer = LagGather().setLagLength(p).setInputCol(timeSeriesColumn)
-    df = LagTransformer.transform(df)
-    featuresGenerated = LagTransformer.getFeatureNames()
-    features.extend(featuresGenerated)
-    # Moving Average params
-    # mAvgTransform = MovingAverageSmoothing().setLagLength(q).setInputCol(timeSeriesColumn)
-    # df = mAvgTransform.transform(df)
-    # featuresGenerated = mAvgTransform.getFeatureNames()
-    # features.extend(featuresGenerated)
-    # Other feature generators here:
-    # Moving Average Smoothing
-    # TrendGather
-    # VECTOR ASSEMBLER
-    # this assembles the all the features
-    df = df.dropna()
-    vA = VectorAssembler().setInputCols(features).setOutputCol("features")
-    df_m = vA.transform(df)
-    # Splitting data into train, test
-    splitRatio = 0.7
-    df_train, df_test = df_m.randomSplit([splitRatio, 1 - splitRatio], seed=12345)
     # DECISION-TREE REGRESSOR
     if regressor == "DecisionTreeRegression":
         dr = DecisionTreeRegressor(featuresCol="features", labelCol="label", maxDepth=5)
     # LINEAR REGRESSOR
     if regressor == 'LinearRegression':
-        dr = LinearRegression(featuresCol="features", labelCol="label", maxIter=100, regParam=0.4, elasticNetParam=0.1)
+        dr = LinearRegression(featuresCol="features", labelCol="label", maxIter=100, regParam=0.4,
+                              elasticNetParam=0.1)
     # RANDOM FOREST REGRESSOR
     if regressor == 'RandomForestRegression':
         dr = RandomForestRegressor(featuresCol="features", labelCol="label", maxDepth=5, subsamplingRate=0.8)
@@ -144,86 +101,102 @@ def forecast(df, forecast_days, p, q, timeSeriesColumn, regressor):
     model = dr.fit(df_train)
     predictions_dr_test = model.transform(df_test)
     predictions_dr_train = model.transform(df_train)
-    # RMSE is used as evaluation metric
-    evaluator = RegressionEvaluator(predictionCol="prediction", labelCol="label", metricName="rmse")
-    RMSE_dr_test = evaluator.evaluate(predictions_dr_test)
-    RMSE_dr_train = evaluator.evaluate(predictions_dr_train)
-    return df_test, df_train, predictions_dr_test, predictions_dr_train, RMSE_dr_test, RMSE_dr_train
+    return predictions_dr_test, predictions_dr_train
 
 
-def Predict(i, df1, df2, timeSeriesCol, predictionCol, joinCol):
-    # this converts differenced predictions to raw predictions
-    dZCol = 'DeltaZ' + str(i)
-    f_strCol = 'forecast_' + str(i) + 'day'
-    df = df1.join(df2, [joinCol], how='inner') \
-        .orderBy(asc('Date'))
-    df = df.withColumnRenamed(predictionCol, dZCol)
-    df = df.withColumn(f_strCol, col(dZCol) + col(timeSeriesCol))
+def transform_real_values(df, mean, std, p):
+    for i in range(1, p + 1):
+        column_old = "PRCP-tran_LagBy_" + str(i)
+        column_new = "PRCP-LagBy_" + str(i)
+        if i == 0:
+            df = df.withColumn(column_new, df[column_old] * std + mean)
+        else:
+            df = df.withColumn(column_new, df[column_old] * std + mean).drop(column_old)
     return df
 
 
-def CheckStationarity(timeSeriesCol):
-    # this function works with Pandas dataframe only not with spark dataframes
-    # this performs Augmented Dickey-Fuller's test
+def set_features(df, p):
+    """
+    :param df:Spark DataFrame
+    :param p: p parameters in AR model (length of history)
+    :return:extract the features from the DF and return new DF with the features and a list with the name of the features
+    """
+    features = []
+    # Auto-regression feature
+    LagTransformer = LagGather().setLagLength(p).setInputCol("PRCP-tran")
+    df = LagTransformer.transform(df)
+    featuresGenerated = LagTransformer.getFeatureNames()
+    features.extend(featuresGenerated)
+    # VECTOR ASSEMBLER
+    # this assembles the all the features
+    df = df.dropna()
+    vA = VectorAssembler().setInputCols(features).setOutputCol("features")
+    df = vA.transform(df)
+    return df
 
-    test_result = adfuller(timeSeriesCol.values)
-    print('ADF Statistic: % f \n%', test_result[0])
-    print('p - value: % f \n%', test_result[1])
-    print('Critical values are: \n')
-    print(test_result[4])
 
-
-def SavePredictions(df, timeSeriesCol, regressionType, forecast_days, p, q, filename, diff):
-    # this is the main function which calls forecast and predict
-    # this saves predictions in csv files
-
-    # Differencing data to remove non-stationarity
+def save_predictions(df, regression_type, num_forecast_days, p, filename):
+    """
+    :param df: spark DataFrame
+    :param regression_type:type of regression that been chosen
+    :param num_forecast_days:number of days that will be forecast
+    :param p: number of days as params
+    :param filename: filename of the file that been saved
+    :return:
+    """
+    # order the time series
     df = df.orderBy(col('date').asc())
-    diff_timeSeriesCol = "Diff_" + timeSeriesCol
-    df = difference(df, timeSeriesCol, diff_timeSeriesCol, diff)
+    rows = df.count()
+    # normalize the data
+    #df_stat = df.select(avg(col("PRCP")).alias('mean'), stddev(col("PRCP")).alias('std')).collect()
+    #avg_value = df_stat[0]['mean']
+    #std_value = df_stat[0]['std']
+    #df = df.withColumn("PRCP-tran", (df["PRCP"] - avg_value) / std_value)
+    # Splitting data into train, test
+    df = df.withColumn("Series", lit('Univariate')).withColumnRenamed("PRCP", "PRCP-tran")
+    w = Window.orderBy("Series")
+    df = df.withColumn("row_num", row_number().over(w))
+    df = df.drop("Series")
+    split = round(0.7 * rows)
+    df_train = df.filter(col("row_num") <= split)
+    df_test = df.subtract(df_train).drop("row_num")
+    df_train = df_train.drop("row_num")
+    # create a DF with the needed features
+    df_train = set_features(df_train, p)
+    df_test = set_features(df_test, p)
+    # transform the features into standart scale
+    #df_train = transform_real_values(df_train, avg_value, std_value, p)
+    #df_test = transform_real_values(df_test, avg_value, std_value, p)
 
-    RMSE_test = {}
-    RMSE_train = {}
+    rmse_test = {}
+    rmse_train = {}
 
-    # Forecasting and Undifferencing the data
-    for i in range(1, forecast_days + 1):
+    for i in range(num_forecast_days + 1):
+        # names of new columns that been added
+        new_label = "day_number :" + str(i)
+        new_pred = "predication day number :" + str(i)
+        evaluator = RegressionEvaluator(predictionCol=new_pred, labelCol=new_label, metricName="rmse")
         # training with Spark's ML algorithms
-        df_test, df_train, predictions_test, predictions_train, \
-        RMSE_ts, RMSE_tr = forecast(df.select("Date", timeSeriesCol, diff_timeSeriesCol), i, p, q,
-                                    diff_timeSeriesCol, regressionType)
-
-        RMSE_test.update({'forecast_' + str(i) + 'day': RMSE_ts})
-        RMSE_train.update({'forecast_' + str(i) + 'day': RMSE_tr})
+        df_test, df_train = forecast(df_train, df_test, i, regression_type)
+        df_test = df_test.withColumnRenamed("label", new_label)
+        df_test = df_test.withColumnRenamed("prediction", new_pred)
+        df_train = df_train.withColumnRenamed("label", new_label)
+        df_train = df_train.withColumnRenamed("prediction", new_pred)
+        #df_train = df_train.withColumn(new_label, df_train["label"] * std_value + avg_value).drop("label")
+        #df_train = df_train.withColumn(new_pred, df_train["prediction"] * std_value + avg_value).drop("prediction")
+        #df_test = df_test.withColumn(new_label, df_test["label"] * std_value + avg_value).drop("label")
+        #df_test = df_test.withColumn(new_pred, df_test["prediction"] * std_value + avg_value).drop("prediction")
+        rmse_ts = evaluator.evaluate(df_test)
+        rmse_tr = evaluator.evaluate(df_train)
+        print(f"day :{i}, rmse train : {rmse_tr}, rmse test :{rmse_ts}")
+        rmse_test.update({'forecast_' + str(i) + 'day': rmse_ts})
+        rmse_train.update({'forecast_' + str(i) + 'day': rmse_tr})
         # predictions for training data
-        if i == 1:
-
-            # saving the 1-day forecast as separate column
-            corr_predict_train = Predict(i, df_train.select("Date", timeSeriesCol),
-                                         predictions_train.select("Date", "prediction"), timeSeriesCol,
-                                         "prediction", "Date")
-
-            corr_predict_test = Predict(i, df_test.select("Row Number", "Date", timeSeriesCol),
-                                        predictions_test.select("Row Number", "prediction"), timeSeriesCol,
-                                        "prediction", "Row Number")
-        else:
-            # saving each subsequent forecast as separate column
-            strCol_prev = "forecast_" + str(i - 1) + "day"
-            corr_predict_train = Predict(i, corr_predict_train, predictions_train.select("Row Number",
-                                                                                         "prediction"), strCol_prev,
-                                         "prediction", "Row Number")
-            corr_predict_test = Predict(i, corr_predict_test, predictions_test.select("Row Number",
-                                                                                      "prediction"), strCol_prev,
-                                        "prediction", "Row Number")
-            # saving actual labels as separate columns
-            LeadWindow = Window.rowsBetween(0, i)
-            a_strCol = "actual_" + str(i) + "day"
-            corr_predict_test = corr_predict_test.withColumn(a_strCol, last(corr_predict_test[timeSeriesCol]) \
-                                                             .over(LeadWindow))
-            corr_predict_train = corr_predict_train.withColumn(a_strCol, last(corr_predict_test[timeSeriesCol]) \
-                                                               .over(LeadWindow))
+    df_train = df_train.drop("features", "PRCP-tran_LagBy_0")
+    df_test = df_test.drop("features", "PRCP-tran_LagBy_0")
     # Saving data into csv files
-    corr_predict_test.write.format("csv").option("header", "true").save(filename + "test.csv")
-    corr_predict_train.write.format("csv").option("header", "true").save(filename + "train.csv")
+    df_test.write.format("csv").option("header", "true").save(filename + "test.csv")
+    df_train.write.format("csv").option("header", "true").save(filename + "train.csv")
 
     # error statistics summary
     print("Error statistics summary for %s " % filename)
@@ -243,14 +216,26 @@ if __name__ == "__main__":
     StationDF = spark.read \
         .format("jdbc") \
         .option("url", url) \
-        .option("dbtable", "GB_Table") \
+        .option("dbtable", "FR_Table") \
         .option("user", username) \
         .option("password", password).load()
-    oneStation = StationDF.filter(col('StationId') == 'GBM00064550').filter(col('Variable') == 'PRCP').drop("Variable")
-    timeSeriesCol = "Value"
+    StationDF = StationDF.filter(col('Variable') == 'PRCP').drop("Variable")
+    df_1 = StationDF.filter(col('StationId').isin(cluster1) == True).drop("StationId") \
+        .groupby('Date').agg(avg("Value").alias("PRCP"))
+    #df_2 = StationDF.filter(col('StationId').isin(cluster2) == True).drop("StationId") \
+    #    .groupby('Date').agg(avg("Value").alias("PRCP"))
+    #df_3 = StationDF.filter(col('StationId').isin(cluster3) == True).drop("StationId") \
+    #    .groupby('Date').agg(avg("Value").alias("PRCP"))
+    #df_4 = StationDF.filter(col('StationId').isin(cluster4) == True).drop("StationId") \
+    #    .groupby('Date').agg(avg("Value").alias("PRCP"))
+    df_5 = StationDF.filter(col('StationId') == "FRE00171632").drop("StationId") \
+        .groupby('Date').agg(avg("Value").alias("PRCP"))
     regressionType = "LinearRegression"
-    forecast_days = 5
-    p = 100
-    q = 100
-    RMSE_train, RMSE_test = SavePredictions(oneStation, timeSeriesCol, regressionType, forecast_days, p, q, "First",
-                                            1)
+    forecast_days = 3
+    p = 3
+    regressionTypeList = ["LinearRegression", "DecisionTreeRegression", 'RandomForestRegression', 'GBTRegression']
+    for re in regressionTypeList:
+        for pt in [3, 4, 5]:
+            print(f"-----------------{re}-------{pt}---------")
+            file_name = re + str(pt)
+            RMSE_train, RMSE_test = save_predictions(df_1, re, forecast_days, pt, file_name)
