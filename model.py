@@ -147,11 +147,6 @@ def save_predictions(df, regression_type, num_forecast_days, p, filename):
     # order the time series
     df = df.orderBy(col('date').asc())
     rows = df.count()
-    # normalize the data
-    #df_stat = df.select(avg(col("PRCP")).alias('mean'), stddev(col("PRCP")).alias('std')).collect()
-    #avg_value = df_stat[0]['mean']
-    #std_value = df_stat[0]['std']
-    #df = df.withColumn("PRCP-tran", (df["PRCP"] - avg_value) / std_value)
     # Splitting data into train, test
     df = df.withColumn("Series", lit('Univariate')).withColumnRenamed("PRCP", "PRCP-tran")
     w = Window.orderBy("Series")
@@ -164,14 +159,12 @@ def save_predictions(df, regression_type, num_forecast_days, p, filename):
     # create a DF with the needed features
     df_train = set_features(df_train, p)
     df_test = set_features(df_test, p)
-    # transform the features into standart scale
-    #df_train = transform_real_values(df_train, avg_value, std_value, p)
-    #df_test = transform_real_values(df_test, avg_value, std_value, p)
+
 
     rmse_test = {}
     rmse_train = {}
 
-    for i in range(num_forecast_days + 1):
+    for i in range(num_forecast_days):
         # names of new columns that been added
         new_label = "day_number :" + str(i)
         new_pred = "predication day number :" + str(i)
@@ -182,32 +175,26 @@ def save_predictions(df, regression_type, num_forecast_days, p, filename):
         df_test = df_test.withColumnRenamed("prediction", new_pred)
         df_train = df_train.withColumnRenamed("label", new_label)
         df_train = df_train.withColumnRenamed("prediction", new_pred)
-        #df_train = df_train.withColumn(new_label, df_train["label"] * std_value + avg_value).drop("label")
-        #df_train = df_train.withColumn(new_pred, df_train["prediction"] * std_value + avg_value).drop("prediction")
-        #df_test = df_test.withColumn(new_label, df_test["label"] * std_value + avg_value).drop("label")
-        #df_test = df_test.withColumn(new_pred, df_test["prediction"] * std_value + avg_value).drop("prediction")
         rmse_ts = evaluator.evaluate(df_test)
         rmse_tr = evaluator.evaluate(df_train)
         print(f"day :{i}, rmse train : {rmse_tr}, rmse test :{rmse_ts}")
         rmse_test.update({'forecast_' + str(i) + 'day': rmse_ts})
         rmse_train.update({'forecast_' + str(i) + 'day': rmse_tr})
         # predictions for training data
-    df_train = df_train.drop("features", "PRCP-tran_LagBy_0")
-    df_test = df_test.drop("features", "PRCP-tran_LagBy_0")
     # Saving data into csv files
-    df_test.write.format("csv").option("header", "true").save(filename + "test.csv")
-    df_train.write.format("csv").option("header", "true").save(filename + "train.csv")
+    df_test.toPandas().to_csv(filename + 'test.csv', header=True)
+    df_train.toPandas().to_csv(filename + 'test.csv', header=True)
 
     # error statistics summary
     print("Error statistics summary for %s " % filename)
     print("RMSE for train data:\n")
-    print(RMSE_train)
+    print(rmse_train)
     print("RMSE for test data:\n")
-    print(RMSE_test)
+    print(rmse_test)
     print('Two output files created')
     print('Predictions for train data: %s' % (filename + 'train.csv'))
     print('Predictions for test data: %s' % (filename + 'test.csv'))
-    return RMSE_train, RMSE_test
+
 
 
 if __name__ == "__main__":
@@ -228,14 +215,12 @@ if __name__ == "__main__":
     #    .groupby('Date').agg(avg("Value").alias("PRCP"))
     #df_4 = StationDF.filter(col('StationId').isin(cluster4) == True).drop("StationId") \
     #    .groupby('Date').agg(avg("Value").alias("PRCP"))
-    df_5 = StationDF.filter(col('StationId') == "FRE00171632").drop("StationId") \
-        .groupby('Date').agg(avg("Value").alias("PRCP"))
     regressionType = "LinearRegression"
     forecast_days = 3
     p = 3
     regressionTypeList = ["LinearRegression", "DecisionTreeRegression", 'RandomForestRegression', 'GBTRegression']
     for re in regressionTypeList:
-        for pt in [3, 4, 5]:
-            print(f"-----------------{re}-------{pt}---------")
+        for pt in [4, 5]:
+            print(f"-----------------{re}-------{pt}--------------")
             file_name = re + str(pt)
-            RMSE_train, RMSE_test = save_predictions(df_1, re, forecast_days, pt, file_name)
+            save_predictions(df_1, re, forecast_days, pt, file_name)
