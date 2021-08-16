@@ -32,15 +32,21 @@ basic_schema = StructType([StructField('StationId', StringType(), False),
                            StructField('Q_Flag', StringType(), True),
                            StructField('S_Flag', StringType(), True),
                            StructField('ObsTime', StringType(), True)])
-
+# DB scheme
 myDB_schema = StructType([StructField('StationId', StringType(), True),
                           StructField('Date', DateType(), True),
                           StructField('Variable', StringType(), True),
                           StructField('Value', IntegerType(), True)])
 
 
-def writeToSQLWarehouse(myDf, epochId, country_list):
-    myDf.printSchema()
+def write_to_DB(myDf, epochId, country_list):
+    """
+    :param myDf:Static DF to write to DB
+    :param epochId: number of epoch
+    :param country_list: list of county
+    """
+    print("batch ID:", epochId)
+    # filter the DF according the current country, and insert it to the right table in DB
     for country in country_list:
         print(country)
         myDf.filter("StationId LIKE '" + country + "%'") \
@@ -55,7 +61,9 @@ def writeToSQLWarehouse(myDf, epochId, country_list):
 
 
 if __name__ == "__main__":
+    # start a spark session
     spark = SparkSession.builder.getOrCreate()
+    # create the proper table in the DB
     rdd = spark.sparkContext.emptyRDD()
     Df = spark.createDataFrame(rdd, myDB_schema)
     # initialize database
@@ -69,6 +77,7 @@ if __name__ == "__main__":
             .option("password", password) \
             .save()
 
+    # defining spark streaming
     firstDF = (
         spark.readStream
         .format("kafka")
@@ -86,6 +95,7 @@ if __name__ == "__main__":
         .withColumn("Date", to_date(col("date"), 'yyyyMMdd'))
         .groupby("StationId", "Date", "Variable").agg(F.max("Value").alias("Value"))
     )
-    query = firstDF.writeStream.foreachBatch(lambda df, epoch_id: writeToSQLWarehouse(df, epoch_id, country_list)). \
+    # start spark streaming
+    query = firstDF.writeStream.foreachBatch(lambda df, epoch_id: write_to_DB(df, epoch_id, country_list)). \
         trigger(processingTime='60 seconds').outputMode("update").start()
     query.awaitTermination()
