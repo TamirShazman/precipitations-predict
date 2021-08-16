@@ -1,7 +1,7 @@
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import *
-from pyspark.sql.functions import to_date, col, month, year, mean, variance
+from pyspark.sql.functions import to_date, col
 
 """
 In this script, the data we'll be downloaded and modify for insertion to DB. The countries that we selected to download
